@@ -26,7 +26,7 @@ module.exports = ({ username,url }) => {
     
                     <p>Hi <span style="font-weight: bold;">${username}</span> </p>
                     <p style="text-align: center; padding-bottom: 10px;"> 
-                        You're almost set to start enjoying Tridium's Blog. Simply click the link below to verify your email address and get started</p>
+                        You're almost set to start enjoying Ksolve's GPT. Simply click the link below to verify your email address and get started</p>
     
                     <a href="${url}" style="text-decoration: none; text-align: center; display: block; width: 200px; margin: 10px auto; padding: 10px 20px; background: #EB4747; color: white; font-weight: bold; border-radius: 5px;">Verify your email address</a>
                     
