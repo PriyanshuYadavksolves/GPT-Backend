@@ -3,6 +3,7 @@ const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 
 const verificationEmail = require("../emailServices/sendVerificationEmail");
+const resetPasswordEmail = require('../emailServices/sendResetPasswordEmail.js')
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: process.env.SMTP_PORT,
@@ -31,7 +32,7 @@ const register = async (req, res) => {
 
     transporter.sendMail(
       {
-        from: process.env.EMAIL_USERNAME,
+        from: process.env.TEMP_EMAIL,
         to: email,
         subject: "KGPT's Account Verification",
         html: verificationEmailContent,
@@ -134,31 +135,31 @@ const forgotPassword = async (req, res) => {
 
   // find the user, if present in the database
   const user = await User.findOne({ email });
-
+  
   if (!user) {
     return res
-      .status(401)
-      .json({ message: "This Email Not Exist, Enter Correct Email" });
+    .status(401)
+    .json({ message: "This Email Not Exist, Enter Correct Email" });
   }
-
+  
   try {
+    const username = user.username
     const resetToken = user.createPasswordResetToken();
     // Generate OTP
-    const OTP = user.generateOTP();
+    const otp = user.generateOTP();
     // console.log(OTP)
     await user.save();
 
-    const resetURL = `http://localhost:5173/user/reset-password?token=${resetToken}&email=${email}`;
-    const message = `<p>Please reset password by clicking on the following link : 
-    <a href="${resetURL}">Verify Email</a> </p>\n Please enter OTP to reset password :
-    <h1 style="font-size: 40px; letter-spacing: 2px; text-align:center;">${OTP}</h1>`;
+    
+    const url = `http://localhost:5173/user/reset-password?token=${resetToken}&email=${email}`;
+    const resetPasswordEmailContent = resetPasswordEmail({ username,otp, url });
 
     transporter.sendMail(
       {
-        from: process.env.EMAIL_USERNAME,
+        from: process.env.TEMP_EMAIL,
         to: email,
         subject: "KGPT's Reset Password",
-        html: message,
+        html: resetPasswordEmailContent,
       },
       (err, res) => {
         if (err) {
@@ -174,6 +175,7 @@ const forgotPassword = async (req, res) => {
       message: "Please check your email for reset password link",
     });
   } catch (error) {
+    console.log(error)
     user.passwordResetToken = undefined;
     user.passwordResetTokenExpirationDate = undefined;
     await user.save();
@@ -182,7 +184,7 @@ const forgotPassword = async (req, res) => {
 };
 
 const resetPassword = async (req, res) => {
-  const { token, email, otp, password } = req.body;
+  const { verificationToken:token, email, otp, password } = req.body;
 
   if (!token || !email) {
     return res.status(422).json({ message: "Missing Token/Email" });
@@ -208,7 +210,7 @@ const resetPassword = async (req, res) => {
       user.passwordResetToken !== hashedToken ||
       user.passwordResetTokenExpirationDate <= currentDate ||
       user.otp !== otp ||
-      otpExpires <= currentDate
+      user.otpExpires <= currentDate
     ) {
       return res
         .status(410)
@@ -232,10 +234,11 @@ const resetPassword = async (req, res) => {
     user.otpExpires = null;
     await user.save();
 
-    res.status(205).json({
+    res.status(200).json({
       message: "Password reset successfully",
     });
   } catch (error) {
+    console.log(error)
     res.status(500).json({ error, message: "Service unavilable" });
   }
 };
