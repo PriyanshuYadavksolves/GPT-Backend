@@ -63,8 +63,10 @@ UserSchema.methods.createPasswordResetToken = function () {
 
   UserSchema.methods.generateOTP = function () {
     const otp = otpGenerator.generate(6, {
-      upperCaseAlphabets: true,
+      lowerCaseAlphabets:false,
+      upperCaseAlphabets: false,
       specialChars: false,
+      digits:true
     });
     this.otp = otp;
     this.otpExpires = Date.now() + 10 * 60 * 1000;
