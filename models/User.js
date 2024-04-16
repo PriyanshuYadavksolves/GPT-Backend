@@ -24,8 +24,12 @@ const UserSchema = mongoose.Schema(
         },
         password: {
             type: String,
-            required: [true, "Please provide password"],
+            // required: [true, "Please provide password"],
             minlnegth: [6, "Password must contain at least 6 characters"],
+        },
+        profilePic:{
+          type:String,
+          default:"https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRD5iROb1TgJ_rcl-6r-68v1yjtID052zxSkw&usqp=CAU"
         },
         verificationToken: String,
         isVerified: {

@@ -1,6 +1,9 @@
 const User = require("../models/User");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
+const { OAuth2Client } = require('google-auth-library');
+const bcrypt = require('bcrypt')
 
 const verificationEmail = require("../emailServices/sendVerificationEmail");
 const resetPasswordEmail = require('../emailServices/sendResetPasswordEmail.js')
@@ -13,6 +16,40 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASSWORD,
   },
 });
+
+const google =  async (req, res) => {
+  const client = new OAuth2Client(process.env.CLIENT_ID);
+  const { token } = req.body;
+  // console.log(req.body)
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.CLIENT_ID,
+    });
+    const { name, email, picture } = ticket.getPayload();
+    let user = await User.findOne({ email },{username:1,email:1,profilePic:1,password:1,_id:1});    
+    if(!user){
+      user = await User.create({
+        username:name,
+        email,
+        isVerified : true,
+        profilePic:picture
+      })
+    }else{
+      user.isVerified = true
+      await user.save();
+    }
+    
+    const loginToken = jwt.sign({ userId: user._id }, process.env.SECRET, { expiresIn: '1h' });
+    const { password, ...others } = user._doc;
+
+    res.status(200).json({loginToken,others});
+
+  } catch (error) {
+    console.log(error)
+    res.status(500).json({messgae:"service Unavailable"})
+  }
+};
 
 const register = async (req, res) => {
   const { username, email, password } = req.body;
@@ -85,7 +122,8 @@ const verifyEmail = async (req, res) => {
 };
 
 const login = async (req, res) => {
-  const { email, password } = req.body;
+  const { email ,password} = req.body;
+  console.log(req.body)
 
   if (!email || !password) {
     return res.status(422).json({
@@ -94,16 +132,16 @@ const login = async (req, res) => {
   }
 
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email },{username:1,email:1,profilePic:1,password:1,isVerified:1,_id:1});
     if (!user) {
       return res.status(404).json({
         message: "Email does not exists",
       });
     }
 
-    const validated = await bcrypt.compare(password, user.password);
+    const validated = await bcrypt.compare(req.body.password, user.password);
     if (!validated) {
-      return res.status(400).json("wrong credentials!");
+      return res.status(400).json({message:"wrong credentials!"});
     }
 
     if (!user.isVerified) {
@@ -116,10 +154,11 @@ const login = async (req, res) => {
       expiresIn: "3d",
     });
 
-    const { password, createdAt, updatedAt, __v, ...others } = user._doc;
+    const { password,isVerified ,...others } = user._doc;
     res.status(200).json({ others, token });
   } catch (error) {
-    return res.status(503).json({ err, message: "Service unavailable" });
+    console.log(error)
+    return res.status(503).json({ error, message: "Service unavailable" });
   }
 };
 
@@ -249,4 +288,5 @@ module.exports = {
   verifyEmail,
   forgotPassword,
   resetPassword,
+  google
 };
