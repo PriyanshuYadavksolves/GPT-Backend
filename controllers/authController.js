@@ -1,8 +1,12 @@
 const User = require("../models/User");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
+const { OAuth2Client } = require('google-auth-library');
+const bcrypt = require('bcrypt')
 
 const verificationEmail = require("../emailServices/sendVerificationEmail");
+const resetPasswordEmail = require('../emailServices/sendResetPasswordEmail.js')
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: process.env.SMTP_PORT,
@@ -12,6 +16,40 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASSWORD,
   },
 });
+
+const google =  async (req, res) => {
+  const client = new OAuth2Client(process.env.CLIENT_ID);
+  const { token } = req.body;
+  // console.log(req.body)
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.CLIENT_ID,
+    });
+    const { name, email, picture } = ticket.getPayload();
+    let user = await User.findOne({ email },{username:1,email:1,profilePic:1,password:1,_id:1});    
+    if(!user){
+      user = await User.create({
+        username:name,
+        email,
+        isVerified : true,
+        profilePic:picture
+      })
+    }else{
+      user.isVerified = true
+      await user.save();
+    }
+    
+    const loginToken = jwt.sign({ userId: user._id }, process.env.SECRET, { expiresIn: '3d' });
+    const { password, ...others } = user._doc;
+
+    res.status(200).json({loginToken,others});
+
+  } catch (error) {
+    console.log(error)
+    res.status(500).json({messgae:"service Unavailable"})
+  }
+};
 
 const register = async (req, res) => {
   const { username, email, password } = req.body;
@@ -31,7 +69,7 @@ const register = async (req, res) => {
 
     transporter.sendMail(
       {
-        from: process.env.EMAIL_USERNAME,
+        from: process.env.TEMP_EMAIL,
         to: email,
         subject: "KGPT's Account Verification",
         html: verificationEmailContent,
@@ -84,8 +122,7 @@ const verifyEmail = async (req, res) => {
 };
 
 const login = async (req, res) => {
-  const { email, password } = req.body;
-
+  const { email ,password} = req.body;
   if (!email || !password) {
     return res.status(422).json({
       message: "Missing email/password.",
@@ -93,16 +130,16 @@ const login = async (req, res) => {
   }
 
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email },{username:1,email:1,profilePic:1,password:1,isVerified:1,_id:1});
     if (!user) {
       return res.status(404).json({
         message: "Email does not exists",
       });
     }
 
-    const validated = await bcrypt.compare(password, user.password);
+    const validated = await bcrypt.compare(req.body.password, user.password);
     if (!validated) {
-      return res.status(400).json("wrong credentials!");
+      return res.status(400).json({message:"wrong credentials!"});
     }
 
     if (!user.isVerified) {
@@ -111,16 +148,25 @@ const login = async (req, res) => {
       });
     }
 
-    const token = jwt.sign({ userId: user._id }, process.env.SECRET, {
+    req.session.userId = user._id.toString();
+    req.session.save();
+    console.log(req.session)
+    const token = jwt.sign({ userName: user.username }, process.env.SECRET, {
       expiresIn: "3d",
     });
+    res.cookie("jwtToken", token,{ 
+      httpOnly: false,      
+      secure: false, 
+    });
 
-    const { password, createdAt, updatedAt, __v, ...others } = user._doc;
+    const { password,isVerified ,...others } = user._doc;
     res.status(200).json({ others, token });
   } catch (error) {
-    return res.status(503).json({ err, message: "Service unavailable" });
+    console.log(error)
+    return res.status(503).json({ error, message: "Service unavailable" });
   }
 };
+
 
 const forgotPassword = async (req, res) => {
   const { email } = req.body;
@@ -134,31 +180,31 @@ const forgotPassword = async (req, res) => {
 
   // find the user, if present in the database
   const user = await User.findOne({ email });
-
+  
   if (!user) {
     return res
-      .status(401)
-      .json({ message: "This Email Not Exist, Enter Correct Email" });
+    .status(401)
+    .json({ message: "This Email Not Exist, Enter Correct Email" });
   }
-
+  
   try {
+    const username = user.username
     const resetToken = user.createPasswordResetToken();
     // Generate OTP
-    const OTP = user.generateOTP();
+    const otp = user.generateOTP();
     // console.log(OTP)
     await user.save();
 
-    const resetURL = `http://localhost:5173/user/reset-password?token=${resetToken}&email=${email}`;
-    const message = `<p>Please reset password by clicking on the following link : 
-    <a href="${resetURL}">Verify Email</a> </p>\n Please enter OTP to reset password :
-    <h1 style="font-size: 40px; letter-spacing: 2px; text-align:center;">${OTP}</h1>`;
+    
+    const url = `http://localhost:5173/user/reset-password?token=${resetToken}&email=${email}`;
+    const resetPasswordEmailContent = resetPasswordEmail({ username,otp, url });
 
     transporter.sendMail(
       {
-        from: process.env.EMAIL_USERNAME,
+        from: process.env.TEMP_EMAIL,
         to: email,
         subject: "KGPT's Reset Password",
-        html: message,
+        html: resetPasswordEmailContent,
       },
       (err, res) => {
         if (err) {
@@ -174,6 +220,7 @@ const forgotPassword = async (req, res) => {
       message: "Please check your email for reset password link",
     });
   } catch (error) {
+    console.log(error)
     user.passwordResetToken = undefined;
     user.passwordResetTokenExpirationDate = undefined;
     await user.save();
@@ -182,7 +229,7 @@ const forgotPassword = async (req, res) => {
 };
 
 const resetPassword = async (req, res) => {
-  const { token, email, otp, password } = req.body;
+  const { verificationToken:token, email, otp, password } = req.body;
 
   if (!token || !email) {
     return res.status(422).json({ message: "Missing Token/Email" });
@@ -208,7 +255,7 @@ const resetPassword = async (req, res) => {
       user.passwordResetToken !== hashedToken ||
       user.passwordResetTokenExpirationDate <= currentDate ||
       user.otp !== otp ||
-      otpExpires <= currentDate
+      user.otpExpires <= currentDate
     ) {
       return res
         .status(410)
@@ -232,13 +279,42 @@ const resetPassword = async (req, res) => {
     user.otpExpires = null;
     await user.save();
 
-    res.status(205).json({
+    res.status(200).json({
       message: "Password reset successfully",
     });
   } catch (error) {
+    console.log(error)
     res.status(500).json({ error, message: "Service unavilable" });
   }
 };
+
+const logout = (req, res) => {
+    const sessionId = req.sessionID; // Get the session ID
+    req.session.destroy(function (err) {
+      if (err) {
+        console.error("Error destroying session:", err);
+        res.status(500).send("Error destroying session");
+      } else {
+        console.log("Destroyed session");
+        store.destroy(sessionId, function (err) { // Destroy session in MongoDB store
+          if (err) {
+            console.error("Error destroying session in MongoDB store:", err);
+            res.status(500).send("Error destroying session in MongoDB store");
+          } else {
+            console.log("Destroyed session in MongoDB store");
+            console.log(sessionId)
+            res.clearCookie("jwtToken"); // Clear the session cookie
+            res.clearCookie("sCookie"); // Clear the session cookie
+            res.send({msg:"logout",id:sessionId});
+          }
+        });
+      }
+    });
+  }
+  const isValidUser = (req,res)=>{
+    res.status(200).json(true)
+}
+
 
 module.exports = {
   register,
@@ -246,4 +322,7 @@ module.exports = {
   verifyEmail,
   forgotPassword,
   resetPassword,
+  google,
+  logout,
+  isValidUser
 };

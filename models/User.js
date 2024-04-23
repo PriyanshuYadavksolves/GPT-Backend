@@ -24,8 +24,12 @@ const UserSchema = mongoose.Schema(
         },
         password: {
             type: String,
-            required: [true, "Please provide password"],
+            // required: [true, "Please provide password"],
             minlnegth: [6, "Password must contain at least 6 characters"],
+        },
+        profilePic:{
+          type:String,
+          default:"https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRD5iROb1TgJ_rcl-6r-68v1yjtID052zxSkw&usqp=CAU"
         },
         verificationToken: String,
         isVerified: {
@@ -63,8 +67,10 @@ UserSchema.methods.createPasswordResetToken = function () {
 
   UserSchema.methods.generateOTP = function () {
     const otp = otpGenerator.generate(6, {
-      upperCaseAlphabets: true,
+      lowerCaseAlphabets:false,
+      upperCaseAlphabets: false,
       specialChars: false,
+      digits:true
     });
     this.otp = otp;
     this.otpExpires = Date.now() + 10 * 60 * 1000;
