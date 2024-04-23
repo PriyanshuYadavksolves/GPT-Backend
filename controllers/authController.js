@@ -40,7 +40,7 @@ const google =  async (req, res) => {
       await user.save();
     }
     
-    const loginToken = jwt.sign({ userId: user._id }, process.env.SECRET, { expiresIn: '1h' });
+    const loginToken = jwt.sign({ userId: user._id }, process.env.SECRET, { expiresIn: '3d' });
     const { password, ...others } = user._doc;
 
     res.status(200).json({loginToken,others});
@@ -123,8 +123,6 @@ const verifyEmail = async (req, res) => {
 
 const login = async (req, res) => {
   const { email ,password} = req.body;
-  console.log(req.body)
-
   if (!email || !password) {
     return res.status(422).json({
       message: "Missing email/password.",
@@ -150,8 +148,15 @@ const login = async (req, res) => {
       });
     }
 
-    const token = jwt.sign({ userId: user._id }, process.env.SECRET, {
+    req.session.userId = user._id.toString();
+    req.session.save();
+    console.log(req.session)
+    const token = jwt.sign({ userName: user.username }, process.env.SECRET, {
       expiresIn: "3d",
+    });
+    res.cookie("jwtToken", token,{ 
+      httpOnly: false,      
+      secure: false, 
     });
 
     const { password,isVerified ,...others } = user._doc;
@@ -161,6 +166,7 @@ const login = async (req, res) => {
     return res.status(503).json({ error, message: "Service unavailable" });
   }
 };
+
 
 const forgotPassword = async (req, res) => {
   const { email } = req.body;
@@ -282,11 +288,41 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const logout = (req, res) => {
+    const sessionId = req.sessionID; // Get the session ID
+    req.session.destroy(function (err) {
+      if (err) {
+        console.error("Error destroying session:", err);
+        res.status(500).send("Error destroying session");
+      } else {
+        console.log("Destroyed session");
+        store.destroy(sessionId, function (err) { // Destroy session in MongoDB store
+          if (err) {
+            console.error("Error destroying session in MongoDB store:", err);
+            res.status(500).send("Error destroying session in MongoDB store");
+          } else {
+            console.log("Destroyed session in MongoDB store");
+            console.log(sessionId)
+            res.clearCookie("jwtToken"); // Clear the session cookie
+            res.clearCookie("sCookie"); // Clear the session cookie
+            res.send({msg:"logout",id:sessionId});
+          }
+        });
+      }
+    });
+  }
+  const isValidUser = (req,res)=>{
+    res.status(200).json(true)
+}
+
+
 module.exports = {
   register,
   login,
   verifyEmail,
   forgotPassword,
   resetPassword,
-  google
+  google,
+  logout,
+  isValidUser
 };
